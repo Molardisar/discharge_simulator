@@ -25,8 +25,14 @@ pip install -r requirements.txt
 
 ### 启动应用
 
+**一键启动（推荐）**：
 ```bash
-streamlit run discharge_simulator_app.py
+./run.sh
+```
+
+**手动启动**：
+```bash
+./venv/bin/streamlit run discharge_simulator_app.py
 ```
 
 浏览器自动打开 `http://localhost:8501`
