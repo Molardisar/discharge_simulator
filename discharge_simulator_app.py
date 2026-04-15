@@ -223,7 +223,6 @@ with col1:
             ax_data.set_title('原始放电数据')
             ax_data.grid(True, alpha=0.3)
             ax_data.legend()
-            ax_data.invert_xaxis()
             
             st.pyplot(fig_data)
             
