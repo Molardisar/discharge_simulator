@@ -296,29 +296,29 @@ if run_button and st.session_state.data is not None:
         with col8:
             st.metric("放出容量", f"{result['discharged_capacity'].iloc[-1] - result['discharged_capacity'].iloc[0]:.3f} Ah")
         
-        # 曲线图
-        st.subheader("Discharge Curves")
+        # 曲线图 - 时间为横坐标
+        st.subheader("Discharge Curves vs Time")
         
-        fig, axes = plt.subplots(3, 1, figsize=(12, 10), sharex=True)
-        fig.suptitle(f'Constant Power Discharge ({power}W, {duration}s)\nStart: {start_soc*100:.0f}% SoC', 
+        fig1, axes1 = plt.subplots(3, 1, figsize=(12, 10), sharex=True)
+        fig1.suptitle(f'Constant Power Discharge ({power}W, {duration}s)\nStart: {start_soc*100:.0f}% SoC', 
                     fontsize=14, fontweight='bold')
         
-        # Voltage
-        ax1 = axes[0]
+        # Voltage vs Time
+        ax1 = axes1[0]
         ax1.plot(result['time'], result['voltage'], 'b-', linewidth=2)
         ax1.set_ylabel('Voltage (V)')
         ax1.grid(True, alpha=0.3)
         ax1.set_ylim(2.5, result['voltage'].max() + 0.1)
         
-        # Current
-        ax2 = axes[1]
+        # Current vs Time
+        ax2 = axes1[1]
         ax2.plot(result['time'], result['current'], 'r-', linewidth=2)
-        ax2.set_ylabel('电流 (A)')
+        ax2.set_ylabel('Current (A)')
         ax2.grid(True, alpha=0.3)
         ax2.set_ylim(result['current'].min() - 2, result['current'].max() + 2)
         
-        # SoC (State of Charge)
-        ax3 = axes[2]
+        # SoC vs Time
+        ax3 = axes1[2]
         ax3.plot(result['time'], result['soc'] * 100, 'g-', linewidth=2)
         ax3.set_ylabel('SoC (%)')
         ax3.set_xlabel('Time (s)')
@@ -326,11 +326,46 @@ if run_button and st.session_state.data is not None:
         ax3.set_ylim(result['soc'].min() * 100 - 5, result['soc'].max() * 100 + 5)
         
         plt.tight_layout()
-        st.pyplot(fig)
+        st.pyplot(fig1)
         
-        # 平滑度检查
+        # 曲线图 - 容量为横坐标
+        st.subheader("Discharge Curves vs Capacity")
+        
+        # 计算累积放电容量
+        discharged_cap = result['discharged_capacity'] - result['discharged_capacity'].iloc[0]
+        
+        fig2, axes2 = plt.subplots(3, 1, figsize=(12, 10), sharex=True)
+        fig2.suptitle(f'Voltage/Current/SoC vs Discharged Capacity\nStart: {start_soc*100:.0f}% SoC', 
+                    fontsize=14, fontweight='bold')
+        
+        # Voltage vs Capacity
+        ax4 = axes2[0]
+        ax4.plot(discharged_cap, result['voltage'], 'b-', linewidth=2)
+        ax4.set_ylabel('Voltage (V)')
+        ax4.grid(True, alpha=0.3)
+        ax4.set_ylim(2.5, result['voltage'].max() + 0.1)
+        
+        # Current vs Capacity
+        ax5 = axes2[1]
+        ax5.plot(discharged_cap, result['current'], 'r-', linewidth=2)
+        ax5.set_ylabel('Current (A)')
+        ax5.grid(True, alpha=0.3)
+        ax5.set_ylim(result['current'].min() - 2, result['current'].max() + 2)
+        
+        # SoC vs Capacity
+        ax6 = axes2[2]
+        ax6.plot(discharged_cap, result['soc'] * 100, 'g-', linewidth=2)
+        ax6.set_ylabel('SoC (%)')
+        ax6.set_xlabel('Discharged Capacity (Ah)')
+        ax6.grid(True, alpha=0.3)
+        ax6.set_ylim(result['soc'].min() * 100 - 5, result['soc'].max() * 100 + 5)
+        
+        plt.tight_layout()
+        st.pyplot(fig2)
+        
+        # Smoothness Check
         volt_diff = np.diff(result['voltage'].values)
-        st.subheader("平滑度验证")
+        st.subheader("Smoothness Check")
         st.write(f"- 最大单步电压变化：**{np.abs(volt_diff).max():.6f} V**")
         st.write(f"- 平均单步电压变化：**{np.abs(volt_diff).mean():.6f} V**")
         st.write(f"- 标准差：**{np.std(volt_diff):.6f} V/步**")
