@@ -297,31 +297,31 @@ if run_button and st.session_state.data is not None:
             st.metric("放出容量", f"{result['discharged_capacity'].iloc[-1] - result['discharged_capacity'].iloc[0]:.3f} Ah")
         
         # 曲线图
-        st.subheader("放电曲线")
+        st.subheader("Discharge Curves")
         
         fig, axes = plt.subplots(3, 1, figsize=(12, 10), sharex=True)
-        fig.suptitle(f'恒功率放电曲线 ({power}W, {duration}秒)\n从 {start_soc*100:.0f}% SoC 开始', 
+        fig.suptitle(f'Constant Power Discharge ({power}W, {duration}s)\nStart: {start_soc*100:.0f}% SoC', 
                     fontsize=14, fontweight='bold')
         
-        # 电压
+        # Voltage
         ax1 = axes[0]
         ax1.plot(result['time'], result['voltage'], 'b-', linewidth=2)
-        ax1.set_ylabel('电压 (V)')
+        ax1.set_ylabel('Voltage (V)')
         ax1.grid(True, alpha=0.3)
-        ax1.set_ylim(result['voltage'].min() - 0.1, result['voltage'].max() + 0.1)
+        ax1.set_ylim(2.5, result['voltage'].max() + 0.1)
         
-        # 电流
+        # Current
         ax2 = axes[1]
         ax2.plot(result['time'], result['current'], 'r-', linewidth=2)
         ax2.set_ylabel('电流 (A)')
         ax2.grid(True, alpha=0.3)
         ax2.set_ylim(result['current'].min() - 2, result['current'].max() + 2)
         
-        # SoC
+        # SoC (State of Charge)
         ax3 = axes[2]
         ax3.plot(result['time'], result['soc'] * 100, 'g-', linewidth=2)
         ax3.set_ylabel('SoC (%)')
-        ax3.set_xlabel('时间 (秒)')
+        ax3.set_xlabel('Time (s)')
         ax3.grid(True, alpha=0.3)
         ax3.set_ylim(result['soc'].min() * 100 - 5, result['soc'].max() * 100 + 5)
         
