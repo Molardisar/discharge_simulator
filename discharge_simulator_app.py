@@ -186,6 +186,10 @@ def simulate_constant_power(voltage_func, cell_cap, start_soc, power, duration, 
 # ==================== 主界面 ====================
 col1, col2 = st.columns([2, 1])
 
+# 初始化 session state
+if 'data' not in st.session_state:
+    st.session_state.data = None
+
 with col1:
     st.header("📊 放电数据预览")
     
@@ -197,6 +201,7 @@ with col1:
         
         try:
             data = load_discharge_data(tmp_path)
+            st.session_state.data = data  # 保存到 session state
             
             # 显示数据摘要
             st.success(f"✓ 成功加载 {len(data)} 个数据点")
@@ -228,10 +233,10 @@ with col1:
             
         except Exception as e:
             st.error(f"读取文件失败：{str(e)}")
-            data = None
+            st.session_state.data = None
     else:
         st.info("👈 请从左侧上传放电数据 Excel 文件")
-        data = None
+        st.session_state.data = None
 
 with col2:
     st.header("📝 配置摘要")
@@ -252,116 +257,122 @@ with col2:
     """)
     
     # 运行按钮
-    run_button = st.button("🚀 开始模拟", type="primary", disabled=(data is None))
+    run_button = st.button("🚀 开始模拟", type="primary", disabled=(st.session_state.data is None))
 
 # ==================== 模拟结果 ====================
-if run_button and data is not None:
-    with st.spinner("正在模拟..."):
-        # 创建插值函数
-        voltage_func = create_2d_interpolator(data)
+if run_button and st.session_state.data is not None:
+    try:
+        with st.spinner("正在模拟..."):
+            # 创建插值函数
+            voltage_func = create_2d_interpolator(st.session_state.data)
+            
+            # 运行模拟
+            result = simulate_constant_power(
+                voltage_func, cell_capacity, start_soc, 
+                power, duration, dt
+            )
         
-        # 运行模拟
-        result = simulate_constant_power(
-            voltage_func, cell_capacity, start_soc, 
-            power, duration, dt
+        # 关键指标
+        st.markdown("---")
+        st.header("📈 模拟结果")
+        
+        col1, col2, col3, col4 = st.columns(4)
+        with col1:
+            st.metric("初始电压", f"{result['voltage'].iloc[0]:.3f} V")
+        with col2:
+            st.metric("结束电压", f"{result['voltage'].iloc[-1]:.3f} V")
+        with col3:
+            st.metric("电压变化", f"{result['voltage'].iloc[0] - result['voltage'].iloc[-1]:.3f} V")
+        with col4:
+            st.metric("实际时长", f"{result['time'].iloc[-1]:.1f} 秒")
+        
+        col5, col6, col7, col8 = st.columns(4)
+        with col5:
+            st.metric("初始电流", f"{result['current'].iloc[0]:.2f} A")
+        with col6:
+            st.metric("结束电流", f"{result['current'].iloc[-1]:.2f} A")
+        with col7:
+            st.metric("结束 SoC", f"{result['soc'].iloc[-1]*100:.1f}%")
+        with col8:
+            st.metric("放出容量", f"{result['discharged_capacity'].iloc[-1] - result['discharged_capacity'].iloc[0]:.3f} Ah")
+        
+        # 曲线图
+        st.subheader("放电曲线")
+        
+        fig, axes = plt.subplots(3, 1, figsize=(12, 10), sharex=True)
+        fig.suptitle(f'恒功率放电曲线 ({power}W, {duration}秒)\n从 {start_soc*100:.0f}% SoC 开始', 
+                    fontsize=14, fontweight='bold')
+        
+        # 电压
+        ax1 = axes[0]
+        ax1.plot(result['time'], result['voltage'], 'b-', linewidth=2)
+        ax1.set_ylabel('电压 (V)')
+        ax1.grid(True, alpha=0.3)
+        ax1.set_ylim(result['voltage'].min() - 0.1, result['voltage'].max() + 0.1)
+        
+        # 电流
+        ax2 = axes[1]
+        ax2.plot(result['time'], result['current'], 'r-', linewidth=2)
+        ax2.set_ylabel('电流 (A)')
+        ax2.grid(True, alpha=0.3)
+        ax2.set_ylim(result['current'].min() - 2, result['current'].max() + 2)
+        
+        # SoC
+        ax3 = axes[2]
+        ax3.plot(result['time'], result['soc'] * 100, 'g-', linewidth=2)
+        ax3.set_ylabel('SoC (%)')
+        ax3.set_xlabel('时间 (秒)')
+        ax3.grid(True, alpha=0.3)
+        ax3.set_ylim(result['soc'].min() * 100 - 5, result['soc'].max() * 100 + 5)
+        
+        plt.tight_layout()
+        st.pyplot(fig)
+        
+        # 平滑度检查
+        volt_diff = np.diff(result['voltage'].values)
+        st.subheader("平滑度验证")
+        st.write(f"- 最大单步电压变化：**{np.abs(volt_diff).max():.6f} V**")
+        st.write(f"- 平均单步电压变化：**{np.abs(volt_diff).mean():.6f} V**")
+        st.write(f"- 标准差：**{np.std(volt_diff):.6f} V/步**")
+        
+        if np.abs(volt_diff).max() < 0.01:
+            st.success("✓ 曲线平滑，无跳变")
+        else:
+            st.warning("⚠️ 曲线可能存在跳变，请检查数据质量")
+        
+        # 数据下载
+        st.subheader("💾 导出结果")
+        
+        # CSV 下载
+        csv = result.to_csv(index=False)
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        st.download_button(
+            label="📥 下载 CSV 数据",
+            data=csv,
+            file_name=f"discharge_simulation_{timestamp}.csv",
+            mime="text/csv"
         )
+        
+        # PNG 下载
+        import io
+        buf = io.BytesIO()
+        fig.savefig(buf, format='png', dpi=150, bbox_inches='tight')
+        buf.seek(0)
+        st.download_button(
+            label="📥 下载曲线图 (PNG)",
+            data=buf,
+            file_name=f"discharge_curve_{timestamp}.png",
+            mime="image/png"
+        )
+        
+        # 详细数据表
+        with st.expander("📋 查看详细数据表"):
+            st.dataframe(result, use_container_width=True)
     
-    # 关键指标
-    st.markdown("---")
-    st.header("📈 模拟结果")
-    
-    col1, col2, col3, col4 = st.columns(4)
-    with col1:
-        st.metric("初始电压", f"{result['voltage'].iloc[0]:.3f} V")
-    with col2:
-        st.metric("结束电压", f"{result['voltage'].iloc[-1]:.3f} V")
-    with col3:
-        st.metric("电压变化", f"{result['voltage'].iloc[0] - result['voltage'].iloc[-1]:.3f} V")
-    with col4:
-        st.metric("实际时长", f"{result['time'].iloc[-1]:.1f} 秒")
-    
-    col5, col6, col7, col8 = st.columns(4)
-    with col5:
-        st.metric("初始电流", f"{result['current'].iloc[0]:.2f} A")
-    with col6:
-        st.metric("结束电流", f"{result['current'].iloc[-1]:.2f} A")
-    with col7:
-        st.metric("结束 SoC", f"{result['soc'].iloc[-1]*100:.1f}%")
-    with col8:
-        st.metric("放出容量", f"{result['discharged_capacity'].iloc[-1] - result['discharged_capacity'].iloc[0]:.3f} Ah")
-    
-    # 曲线图
-    st.subheader("放电曲线")
-    
-    fig, axes = plt.subplots(3, 1, figsize=(12, 10), sharex=True)
-    fig.suptitle(f'恒功率放电曲线 ({power}W, {duration}秒)\n从 {start_soc*100:.0f}% SoC 开始', 
-                fontsize=14, fontweight='bold')
-    
-    # 电压
-    ax1 = axes[0]
-    ax1.plot(result['time'], result['voltage'], 'b-', linewidth=2)
-    ax1.set_ylabel('电压 (V)')
-    ax1.grid(True, alpha=0.3)
-    ax1.set_ylim(result['voltage'].min() - 0.1, result['voltage'].max() + 0.1)
-    
-    # 电流
-    ax2 = axes[1]
-    ax2.plot(result['time'], result['current'], 'r-', linewidth=2)
-    ax2.set_ylabel('电流 (A)')
-    ax2.grid(True, alpha=0.3)
-    ax2.set_ylim(result['current'].min() - 2, result['current'].max() + 2)
-    
-    # SoC
-    ax3 = axes[2]
-    ax3.plot(result['time'], result['soc'] * 100, 'g-', linewidth=2)
-    ax3.set_ylabel('SoC (%)')
-    ax3.set_xlabel('时间 (秒)')
-    ax3.grid(True, alpha=0.3)
-    ax3.set_ylim(result['soc'].min() * 100 - 5, result['soc'].max() * 100 + 5)
-    
-    plt.tight_layout()
-    st.pyplot(fig)
-    
-    # 平滑度检查
-    volt_diff = np.diff(result['voltage'].values)
-    st.subheader("平滑度验证")
-    st.write(f"- 最大单步电压变化：**{np.abs(volt_diff).max():.6f} V**")
-    st.write(f"- 平均单步电压变化：**{np.abs(volt_diff).mean():.6f} V**")
-    st.write(f"- 标准差：**{np.std(volt_diff):.6f} V/步**")
-    
-    if np.abs(volt_diff).max() < 0.01:
-        st.success("✓ 曲线平滑，无跳变")
-    else:
-        st.warning("⚠️ 曲线可能存在跳变，请检查数据质量")
-    
-    # 数据下载
-    st.subheader("💾 导出结果")
-    
-    # CSV 下载
-    csv = result.to_csv(index=False)
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    st.download_button(
-        label="📥 下载 CSV 数据",
-        data=csv,
-        file_name=f"discharge_simulation_{timestamp}.csv",
-        mime="text/csv"
-    )
-    
-    # PNG 下载
-    import io
-    buf = io.BytesIO()
-    fig.savefig(buf, format='png', dpi=150, bbox_inches='tight')
-    buf.seek(0)
-    st.download_button(
-        label="📥 下载曲线图 (PNG)",
-        data=buf,
-        file_name=f"discharge_curve_{timestamp}.png",
-        mime="image/png"
-    )
-    
-    # 详细数据表
-    with st.expander("📋 查看详细数据表"):
-        st.dataframe(result, use_container_width=True)
+    except Exception as e:
+        st.error(f"❌ 模拟失败：{str(e)}")
+        import traceback
+        st.code(traceback.format_exc())
 
 # ==================== 页脚 ====================
 st.markdown("---")
