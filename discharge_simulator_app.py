@@ -78,14 +78,70 @@ uploaded_file = st.sidebar.file_uploader(
 # ==================== 数据处理函数 ====================
 @st.cache_data
 def load_discharge_data(filepath):
-    """读取多倍率放电数据"""
-    df = pd.read_excel(filepath, header=None, skiprows=2)
+    """读取多倍率放电数据 - 动态检测表格结构"""
+    # 先读取前几行分析表格结构
+    df_preview = pd.read_excel(filepath, header=None, nrows=5)
     
-    currents = [90, 80, 70, 60, 50]
+    # 尝试从表头读取电流值（第一行或第二行）
+    header_row = None
+    currents = []
+    
+    # 检查第一行是否包含电流信息
+    for row_idx in range(min(3, len(df_preview))):
+        row_values = df_preview.iloc[row_idx].dropna().values
+        for val in row_values:
+            try:
+                num_val = float(val)
+                # 如果数值在 1-1000 之间，可能是电流值
+                if 1 <= num_val <= 1000:
+                    # 检查是否可能是电流（通常放电电流是整数或接近整数）
+                    if num_val == int(num_val) or abs(num_val - round(num_val)) < 0.1:
+                        if num_val not in currents:
+                            currents.append(num_val)
+            except (ValueError, TypeError):
+                continue
+        
+        # 如果找到了电流值，记录表头位置
+        if currents:
+            header_row = row_idx
+            break
+    
+    # 如果没有从表头找到电流值，使用默认值
+    if not currents:
+        currents = [90, 80, 70, 60, 50]
+    
+    # 排序电流值（从大到小）
+    currents = sorted(currents, reverse=True)
+    
+    # 重新读取数据，跳过表头
+    skip_rows = header_row + 1 if header_row is not None else 2
+    df = pd.read_excel(filepath, header=None, skiprows=skip_rows)
+    
     all_data = []
     
+    # 动态检测列数
+    total_cols = len(df.columns)
+    cols_per_group = 3  # 假设每组 3 列：容量、电压、温度
+    num_groups = total_cols // cols_per_group
+    
+    # 如果电流值数量与列组数不匹配，尝试调整
+    if len(currents) != num_groups and num_groups > 0:
+        # 使用列组数作为电流值数量
+        if len(currents) > num_groups:
+            currents = currents[:num_groups]
+        elif len(currents) < num_groups:
+            # 补充默认电流值
+            default_currents = [100, 90, 80, 70, 60, 50, 40, 30, 20, 10]
+            for curr in default_currents:
+                if curr not in currents and len(currents) < num_groups:
+                    currents.append(curr)
+            currents = sorted(currents, reverse=True)
+    
     for i, curr in enumerate(currents):
-        col_base = i * 3 + 1
+        col_base = i * cols_per_group
+        if col_base + 2 >= total_cols:
+            break
+            
         cap = pd.to_numeric(df.iloc[:, col_base], errors='coerce').values
         volt = pd.to_numeric(df.iloc[:, col_base + 1], errors='coerce').values
         temp = pd.to_numeric(df.iloc[:, col_base + 2], errors='coerce').values
@@ -98,7 +154,17 @@ def load_discharge_data(filepath):
         for c, v, t in zip(cap, volt, temp):
             all_data.append({'current': curr, 'capacity': c, 'voltage': v, 'temperature': t})
     
-    return pd.DataFrame(all_data)
+    result_df = pd.DataFrame(all_data)
+    
+    # 存储元数据以便显示
+    st.session_state['data_metadata'] = {
+        'currents': currents,
+        'num_groups': len(currents),
+        'total_points': len(result_df),
+        'skip_rows': skip_rows
+    }
+    
+    return result_df
 
 def create_2d_interpolator(data):
     """创建 2D 插值函数：voltage = f(capacity, current)"""
@@ -205,6 +271,14 @@ with col1:
             
             # 显示数据摘要
             st.success(f"✓ 成功加载 {len(data)} 个数据点")
+            
+            # 显示检测到的表格结构
+            if 'data_metadata' in st.session_state:
+                meta = st.session_state.data_metadata
+                st.info(f"""**📋 表格结构检测**
+- 检测到 **{meta['num_groups']}** 组数据（{meta['currents']})
+- 跳过表头行数：{meta['skip_rows']}
+- 总数据点：{meta['total_points']}""")
             
             col_a, col_b, col_c = st.columns(3)
             with col_a:
