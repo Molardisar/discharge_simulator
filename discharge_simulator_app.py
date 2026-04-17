@@ -79,15 +79,15 @@ uploaded_file = st.sidebar.file_uploader(
 @st.cache_data
 def load_discharge_data(filepath):
     """读取多倍率放电数据 - 动态检测表格结构"""
-    # 先读取前 3 行分析表格结构
-    df_preview = pd.read_excel(filepath, header=None, nrows=3)
+    # 先读取前 2 行分析表格结构
+    df_preview = pd.read_excel(filepath, header=None, nrows=2)
     
-    # 尝试从表头读取电流值（只检查第 1 行）
+    # 从第 0 行读取电流标签（每组的第 1 列：Col 1, 4, 7, 10...）
     header_row = df_preview.iloc[0]
     currents = []
     
-    # 扫描表头行，寻找电流标签
-    # 格式可能是："90A", "90", "90A 放电", "Current: 90A" 等
+    import re
+    # 扫描所有列，寻找电流标签（格式："90A", "80A" 等）
     for col_idx in range(len(header_row)):
         val = header_row.iloc[col_idx]
         if pd.isna(val):
@@ -95,55 +95,36 @@ def load_discharge_data(filepath):
         
         val_str = str(val).strip()
         
-        # 尝试提取电流值
-        import re
-        # 匹配模式：数字+A（如 "90A"），或纯数字（如 "90"）
-        match = re.search(r'(\d+(?:\.\d+)?)\s*[Aa]?', val_str)
+        # 匹配 "XA" 格式（X 是数字）
+        match = re.match(r'(\d+)\s*[Aa]$', val_str)
         if match:
             try:
-                num_val = float(match.group(1))
-                # 电流通常是 10-1000A 的整数
-                if 10 <= num_val <= 1000:
-                    # 检查是否为整数或接近整数（排除容量值）
-                    if num_val == int(num_val):
-                        if int(num_val) not in currents:
-                            currents.append(int(num_val))
+                curr = int(match.group(1))
+                if curr not in currents:
+                    currents.append(curr)
             except (ValueError, TypeError):
                 continue
     
-    # 如果没有从表头找到电流值，使用默认值
+    # 如果没有找到电流值，使用默认值
     if not currents:
         currents = [90, 80, 70, 60, 50]
     
     # 排序电流值（从大到小）
     currents = sorted(currents, reverse=True)
     
-    # 重新读取数据，跳过表头（假设表头占 1 行）
-    skip_rows = 1
+    # 重新读取数据，跳过 2 行表头
+    skip_rows = 2
     df = pd.read_excel(filepath, header=None, skiprows=skip_rows)
     
     all_data = []
     
-    # 动态检测列数
-    total_cols = len(df.columns)
-    cols_per_group = 3  # 假设每组 3 列：容量、电压、温度
-    num_groups = total_cols // cols_per_group
-    
-    # 如果电流值数量与列组数不匹配，以列组数为准
-    if len(currents) != num_groups and num_groups > 0:
-        if len(currents) > num_groups:
-            currents = currents[:num_groups]
-        elif len(currents) < num_groups:
-            # 补充默认电流值（按常见放电倍率）
-            default_currents = [100, 90, 80, 70, 60, 50, 40, 30, 20, 10]
-            for curr in default_currents:
-                if curr not in currents and len(currents) < num_groups:
-                    currents.append(curr)
-            currents = sorted(currents, reverse=True)
+    # 每组 3 列：容量、电压、温度
+    # 从第 1 列开始（第 0 列是空的）
+    cols_per_group = 3
     
     for i, curr in enumerate(currents):
-        col_base = i * cols_per_group
-        if col_base + 2 >= total_cols:
+        col_base = i * cols_per_group + 1  # 从 Col 1 开始
+        if col_base + 2 >= len(df.columns):
             break
             
         cap = pd.to_numeric(df.iloc[:, col_base], errors='coerce').values
@@ -166,7 +147,7 @@ def load_discharge_data(filepath):
         'num_groups': len(currents),
         'total_points': len(result_df),
         'skip_rows': skip_rows,
-        'total_cols': total_cols
+        'total_cols': len(df.columns)
     }
     
     return result_df
