@@ -74,10 +74,10 @@ st.sidebar.subheader("⚡ 工况配置")
 
 # 初始化 session_state
 if 'segments' not in st.session_state:
-    st.session_state.segments = [{"power": 290, "duration": 90}]
+    st.session_state.segments = [{"power": 290.0, "duration": 90.0}]
 
 def add_segment():
-    st.session_state.segments.append({"power": 150, "duration": 60})
+    st.session_state.segments.append({"power": 150.0, "duration": 60.0})
 
 def remove_segment(index):
     if len(st.session_state.segments) > 1:
@@ -92,9 +92,9 @@ for i, seg in enumerate(st.session_state.segments):
         with col1:
             seg_power = st.number_input(
                 "功率 (W)",
-                value=seg['power'],
+                value=float(seg['power']),
                 min_value=0.01,
-                max_value=10000,
+                max_value=10000.0,
                 step=0.01,
                 format="%.2f",
                 key=f"power_{i}",
