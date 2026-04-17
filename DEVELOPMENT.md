@@ -277,6 +277,56 @@ times = np.arange(0, 90, dt)
 
 **预期**：10-100x 加速
 
+---
+
+## 多段工况调试
+
+### 链式逻辑验证
+
+运行模拟后，检查 CSV 文件的段间连续性：
+
+```python
+import pandas as pd
+
+df = pd.read_csv("discharge_simulation_*.csv")
+
+# 检查段边界
+for seg in sorted(df['segment'].unique())[1:]:
+    prev_seg = seg - 1
+    prev_end = df[df['segment'] == prev_seg].iloc[-1]
+    curr_start = df[df['segment'] == seg].iloc[0]
+    
+    print(f"段{prev_seg}结束 → 段{seg}开始:")
+    print(f"  SoC: {prev_end['soc']*100:.1f}% → {curr_start['soc']*100:.1f}% ✓ 应相同")
+    print(f"  温度：{prev_end['temperature']:.2f}℃ → {curr_start['temperature']:.2f}℃ ✓ 应相同")
+    print(f"  时间：{prev_end['time']:.1f}s → {curr_start['time']:.1f}s ✓ 应连续")
+```
+
+### 温度连续性检查
+
+**预期行为**：
+- ✅ 段间温度连续（ΔT < 0.01℃）
+- ✅ 放电过程温度上升（发热）
+- ✅ 低电流温升小，高电流温升大
+
+**异常排查**：
+1. 温度下降 → 检查电流检测（是否漏掉低电流数据）
+2. 温度跳变 → 检查 `start_temperature` 参数传递
+3. 温度不变 → 检查温升速率积分逻辑
+
+### 电流检测调试
+
+```python
+# 在 load_discharge_data() 中添加调试输出
+currents = [...]  # 检测到的电流
+print(f"检测到的电流：{[c[1] for c in currents]}")
+print(f"范围：{min(c[1] for c in currents)}A - {max(c[1] for c in currents)}A")
+
+# 验证：模拟电流应在数据范围内或接近
+if sim_current < min_current:
+    print(f"⚠️ 警告：模拟电流{sim_current}A < 最小电流{min_current}A，需要外推")
+```
+
 #### 2. 二分查找边界
 
 ```python
