@@ -61,6 +61,23 @@ dt = st.sidebar.number_input(
     step=0.01
 )
 
+# 温度拟合选项
+st.sidebar.subheader("🌡️ 温度设置")
+enable_temp_fit = st.sidebar.checkbox(
+    "启用温度曲线拟合",
+    value=True,
+    help="勾选后使用多项式拟合温度曲线（返回小数值，精度更高）；\n不勾选则使用原始数据插值（只有整数温度）"
+)
+
+fit_order = st.sidebar.slider(
+    "拟合阶数",
+    min_value=2,
+    max_value=5,
+    value=3,
+    disabled=not enable_temp_fit,
+    help="多项式拟合阶数：2-5 阶，越高曲线越复杂，但可能过拟合"
+)
+
 # 文件上传
 st.sidebar.subheader("📁 数据文件")
 uploaded_file = st.sidebar.file_uploader(
@@ -186,8 +203,15 @@ if st.session_state.data is not None:
 if st.session_state.get('run_button', False) and st.session_state.data is not None:
     try:
         with st.spinner("正在模拟..."):
-            # 创建插值函数
-            voltage_func, temp_func, current_min, current_max = create_2d_interpolators(st.session_state.data)
+            # 创建插值函数（根据用户选项决定是否拟合温度）
+            if enable_temp_fit:
+                voltage_func, temp_func, current_min, current_max = create_2d_interpolators(
+                    st.session_state.data, fit_temp_order=fit_order
+                )
+            else:
+                voltage_func, temp_func, current_min, current_max = create_2d_interpolators(
+                    st.session_state.data, fit_temp_order=None
+                )
             
             # 判断单段还是多段
             segments = st.session_state.segments

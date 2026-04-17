@@ -105,11 +105,11 @@ def create_2d_interpolators(data: pd.DataFrame, fit_temp_order: int = 3) -> tupl
     
     参数:
         data: 放电数据 DataFrame
-        fit_temp_order: 温度拟合多项式阶数（默认 3 阶，2-5 之间）
+        fit_temp_order: 温度拟合多项式阶数（3-5 之间），None 则禁用拟合，使用原始数据插值
     
     返回：(voltage_func, temp_func, current_min, current_max)
     - voltage_func: 电压插值函数
-    - temp_func: 温度插值函数（使用多项式拟合，非整数）
+    - temp_func: 温度插值函数（拟合时返回小数，否则返回整数）
     - current_min: 数据中的最小电流
     - current_max: 数据中的最大电流
     
@@ -125,24 +125,25 @@ def create_2d_interpolators(data: pd.DataFrame, fit_temp_order: int = 3) -> tupl
     volt_interp_dict = {}
     temp_fit_params = {}  # 存储每个电流的温度拟合参数
     
-    # 第 1 步：对每个电流的温度曲线进行多项式拟合
-    for current in all_currents:
-        subset = data[data['current'] == current].sort_values('capacity')
-        cap_vals = subset['capacity'].values
-        temp_vals = subset['temperature'].values
-        
-        if len(cap_vals) >= fit_temp_order + 1:
-            # 数据点足够，进行多项式拟合
-            try:
-                # 拟合 T = f(capacity) 多项式
-                coeffs = np.polyfit(cap_vals, temp_vals, fit_temp_order)
-                temp_fit_params[current] = coeffs
-            except Exception as e:
-                # 拟合失败，回退到插值
+    # 第 1 步：对每个电流的温度曲线进行多项式拟合（如果启用）
+    if fit_temp_order is not None:
+        for current in all_currents:
+            subset = data[data['current'] == current].sort_values('capacity')
+            cap_vals = subset['capacity'].values
+            temp_vals = subset['temperature'].values
+            
+            if len(cap_vals) >= fit_temp_order + 1:
+                # 数据点足够，进行多项式拟合
+                try:
+                    # 拟合 T = f(capacity) 多项式
+                    coeffs = np.polyfit(cap_vals, temp_vals, fit_temp_order)
+                    temp_fit_params[current] = coeffs
+                except Exception as e:
+                    # 拟合失败，回退到插值
+                    temp_fit_params[current] = None
+            else:
+                # 数据点不足，用线性插值
                 temp_fit_params[current] = None
-        else:
-            # 数据点不足，用线性插值
-            temp_fit_params[current] = None
     
     # 第 2 步：创建电压插值函数（不变）
     for cap in unique_caps:
