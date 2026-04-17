@@ -34,9 +34,11 @@ def load_discharge_data(filepath: str) -> pd.DataFrame:
         row_data = df_raw.iloc[row_idx].tolist()
         for col, val in enumerate(row_data):
             val_str = str(val).strip()
-            match = re.match(r'^(\d+)A?$', val_str, re.IGNORECASE)
+            # 严格匹配 "XA" 格式（必须有 A 后缀），排除纯数字（温度/容量值）
+            match = re.match(r'^(\d+)A$', val_str, re.IGNORECASE)
             if match:
                 current = int(match.group(1))
+                # 电流范围限制在 10-1000A，排除容量值（0, 0.5, 1.0 等）
                 if 10 <= current <= 1000:
                     if current_row_idx is None:
                         current_row_idx = row_idx
