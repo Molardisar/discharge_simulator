@@ -176,10 +176,13 @@ else:
 # ==================== 模拟执行 ====================
 if st.session_state.data is not None:
     # 运行按钮
-    run_button = st.button("🚀 开始模拟", type="primary", disabled=(st.session_state.data is None))
+    if st.button("🚀 开始模拟", type="primary"):
+        st.session_state.run_button = True
+    else:
+        st.session_state.run_button = False
 
 # ==================== 模拟结果 ====================
-if 'run_button' in st.session_state and st.session_state.run_button and st.session_state.data is not None:
+if st.session_state.get('run_button', False) and st.session_state.data is not None:
     try:
         with st.spinner("正在模拟..."):
             # 创建插值函数
