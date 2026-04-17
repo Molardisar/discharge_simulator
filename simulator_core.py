@@ -232,26 +232,35 @@ def simulate_constant_power(voltage_func, temp_func, cell_cap, start_soc, power,
     time = 0
     use_start_temp = (start_temperature is not None)
     
+    # 初始化温度
+    if use_start_temp:
+        temperature = start_temperature
+    else:
+        temperature = temp_func(discharged_capacity, current_guess)
+    
     while time <= duration:
         soc = remaining_capacity / cell_cap
         
-        if len(results['voltage']) == 0:
-            # 第一次迭代：使用初始猜测电流
-            voltage = voltage_func(discharged_capacity, current_guess)
-            # 温度：如果有起始温度则使用，否则用插值
-            if use_start_temp:
-                temperature = start_temperature
-            else:
-                temperature = temp_func(discharged_capacity, current_guess)
-        else:
+        if len(results['voltage']) > 0:
+            # 非第一步：电压从上一步获取
             voltage = results['voltage'][-1]
-            temperature = results['temperature'][-1]
+        else:
+            # 第一步：使用初始猜测电流
+            voltage = voltage_func(discharged_capacity, current_guess)
         
         current = power / voltage
         voltage = voltage_func(discharged_capacity, current)
-        # 温度：第一步且使用起始温度时不覆盖，后续步骤用插值
-        if not (len(results['voltage']) == 0 and use_start_temp):
-            temperature = temp_func(discharged_capacity, current)
+        
+        # 温度演化：从当前温度 + 温升速率 × 时间
+        # 温升速率从实验数据推导：dT/dt ≈ (T(Q+dQ, I) - T(Q, I)) / dt
+        dQ = current * dt / 3600  # 容量变化 (Ah)
+        temp_next = temp_func(discharged_capacity + dQ, current)
+        temp_prev = temp_func(discharged_capacity, current)
+        dT_dt = (temp_next - temp_prev) / dt  # 温升速率 (℃/s)
+        
+        # 积分温度：T(t+dt) = T(t) + dT/dt × dt
+        temperature = temperature + dT_dt * dt
+        
         current = power / voltage
         
         results['time'].append(time)
