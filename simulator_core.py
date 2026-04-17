@@ -194,7 +194,7 @@ def create_2d_interpolators(data: pd.DataFrame) -> tuple:
     return voltage_func, temperature_func, current_min, current_max
 
 
-def simulate_constant_power(voltage_func, temp_func, cell_cap, start_soc, power, duration, dt, current_guess=None, ambient_temp=25.0):
+def simulate_constant_power(voltage_func, temp_func, cell_cap, start_soc, power, duration, dt, current_guess=None, start_temperature=None, ambient_temp=25.0):
     """恒功率放电模拟
     
     参数:
@@ -206,6 +206,7 @@ def simulate_constant_power(voltage_func, temp_func, cell_cap, start_soc, power,
         duration: 时长 (秒)
         dt: 时间步长 (秒)
         current_guess: 初始电流猜测值（None 时自动估算）
+        start_temperature: 起始温度 (℃)，None 时使用插值值
         ambient_temp: 环境温度 (℃)
     
     返回：{time, discharged_capacity, remaining_capacity, voltage, current, soc, temperature}
@@ -229,13 +230,19 @@ def simulate_constant_power(voltage_func, temp_func, cell_cap, start_soc, power,
     }
     
     time = 0
+    use_start_temp = (start_temperature is not None)
+    
     while time <= duration:
         soc = remaining_capacity / cell_cap
         
         if len(results['voltage']) == 0:
             # 第一次迭代：使用初始猜测电流
             voltage = voltage_func(discharged_capacity, current_guess)
-            temperature = temp_func(discharged_capacity, current_guess)
+            # 温度：如果有起始温度则使用，否则用插值
+            if use_start_temp:
+                temperature = start_temperature
+            else:
+                temperature = temp_func(discharged_capacity, current_guess)
         else:
             voltage = results['voltage'][-1]
             temperature = results['temperature'][-1]
@@ -264,7 +271,7 @@ def simulate_constant_power(voltage_func, temp_func, cell_cap, start_soc, power,
     return pd.DataFrame(results)
 
 
-def simulate_multi_segment_power(voltage_func, temp_func, cell_cap, start_soc, segments, dt=0.1):
+def simulate_multi_segment_power(voltage_func, temp_func, cell_cap, start_soc, segments, dt=0.1, start_temperature=None, ambient_temp=25.0):
     """多段恒功率放电模拟
     
     参数:
@@ -274,6 +281,8 @@ def simulate_multi_segment_power(voltage_func, temp_func, cell_cap, start_soc, s
         start_soc: 初始 SoC (0-1)
         segments: 工况列表，每项为 {"power": float, "duration": int}
         dt: 时间步长 (秒)
+        start_temperature: 初始温度 (℃)，None 时使用插值
+        ambient_temp: 环境温度 (℃)
     
     返回：
         - all_results: 所有段的 DataFrame 列表
@@ -281,6 +290,7 @@ def simulate_multi_segment_power(voltage_func, temp_func, cell_cap, start_soc, s
     """
     all_results = []
     current_soc = start_soc
+    current_temp = start_temperature  # 温度连续传递
     time_offset = 0  # 时间累加器
     
     for i, seg in enumerate(segments):
@@ -291,11 +301,13 @@ def simulate_multi_segment_power(voltage_func, temp_func, cell_cap, start_soc, s
         nominal_voltage = 3.7
         current_guess = power / nominal_voltage
         
-        # 运行单段模拟
+        # 运行单段模拟（传递上一段的结束温度）
         result = simulate_constant_power(
             voltage_func, temp_func, cell_cap,
             current_soc, power, duration, dt,
-            current_guess=current_guess
+            current_guess=current_guess,
+            start_temperature=current_temp,
+            ambient_temp=ambient_temp
         )
         
         # 添加段索引
@@ -311,6 +323,9 @@ def simulate_multi_segment_power(voltage_func, temp_func, cell_cap, start_soc, s
         
         # 更新 SoC 为下一段的初始状态
         current_soc = result['soc'].iloc[-1]
+        
+        # 更新温度为下一段的初始状态（物理连续！）
+        current_temp = result['temperature'].iloc[-1]
         
         # 如果提前终止（电压过低或电量耗尽），停止后续段
         if result['voltage'].iloc[-1] < 2.5 or result['remaining_capacity'].iloc[-1] <= 0:

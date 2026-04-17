@@ -193,10 +193,10 @@ if st.session_state.get('run_button', False) and st.session_state.data is not No
             is_multi_segment = len(segments) > 1
             
             if is_multi_segment:
-                # 多段工况模拟
+                # 多段工况模拟（温度连续传递）
                 all_results, result = simulate_multi_segment_power(
                     voltage_func, temp_func, cell_capacity, start_soc,
-                    segments, dt=dt
+                    segments, dt=dt, start_temperature=None, ambient_temp=25.0
                 )
             else:
                 # 单段工况（向后兼容）
@@ -205,7 +205,8 @@ if st.session_state.get('run_button', False) and st.session_state.data is not No
                 result = simulate_constant_power(
                     voltage_func, temp_func, cell_capacity, start_soc,
                     seg['power'], seg['duration'], dt,
-                    current_guess=initial_current_guess
+                    current_guess=initial_current_guess,
+                    start_temperature=None, ambient_temp=25.0
                 )
         
         # 关键指标
