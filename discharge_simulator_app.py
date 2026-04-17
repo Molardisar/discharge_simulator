@@ -153,25 +153,46 @@ def load_discharge_data(filepath):
     return result_df
 
 def create_2d_interpolator(data):
-    """创建 2D 插值函数：voltage = f(capacity, current)"""
+    """创建 2D 插值函数：voltage = f(capacity, current)
+    
+    返回：(voltage_func, current_min, current_max)
+    - voltage_func: 插值函数
+    - current_min: 数据中的最小电流
+    - current_max: 数据中的最大电流
+    """
     unique_caps = sorted(data['capacity'].unique())
+    
+    # 获取电流范围（用于边界检查和初始猜测）
+    all_currents = sorted(data['current'].unique())
+    current_min = all_currents[0]
+    current_max = all_currents[-1]
     
     cap_interp_dict = {}
     for cap in unique_caps:
         subset = data[data['capacity'] == cap]
-        if len(subset) >= 2:
-            interp = interpolate.interp1d(
-                subset['current'].values,
-                subset['voltage'].values,
-                kind='linear',
-                bounds_error=False,
-                fill_value='extrapolate'
-            )
-            cap_interp_dict[cap] = interp
+        # 即使只有 1 个点，也创建插值函数（常数函数）
+        if len(subset) >= 1:
+            if len(subset) == 1:
+                # 单点：返回常数电压
+                const_voltage = subset['voltage'].values[0]
+                cap_interp_dict[cap] = lambda c, v=const_voltage: v
+            else:
+                # 多点：正常插值
+                interp = interpolate.interp1d(
+                    subset['current'].values,
+                    subset['voltage'].values,
+                    kind='linear',
+                    bounds_error=False,
+                    fill_value='extrapolate'
+                )
+                cap_interp_dict[cap] = interp
     
     cap_list = sorted(cap_interp_dict.keys())
     
     def voltage_func(capacity, current):
+        if not cap_list:
+            raise ValueError("没有可用的插值数据")
+        
         if capacity <= cap_list[0]:
             return float(cap_interp_dict[cap_list[0]](current))
         if capacity >= cap_list[-1]:
@@ -189,12 +210,21 @@ def create_2d_interpolator(data):
         
         return float(cap_interp_dict[cap_list[-1]](current))
     
-    return voltage_func
+    return voltage_func, current_min, current_max
 
-def simulate_constant_power(voltage_func, cell_cap, start_soc, power, duration, dt):
-    """恒功率放电模拟"""
+def simulate_constant_power(voltage_func, cell_cap, start_soc, power, duration, dt, current_guess=None):
+    """恒功率放电模拟
+    
+    参数:
+        current_guess: 初始电流猜测值（None 时自动估算）
+    """
     discharged_capacity = cell_cap * (1 - start_soc)
     remaining_capacity = cell_cap * start_soc
+    
+    # 如果没有提供初始电流猜测，使用功率/标称电压估算
+    if current_guess is None:
+        nominal_voltage = 3.7  # 锂电瓶标称电压
+        current_guess = power / nominal_voltage
     
     results = {
         'time': [],
@@ -210,7 +240,8 @@ def simulate_constant_power(voltage_func, cell_cap, start_soc, power, duration, 
         soc = remaining_capacity / cell_cap
         
         if len(results['voltage']) == 0:
-            voltage = voltage_func(discharged_capacity, 80)
+            # 第一次迭代：使用初始猜测电流
+            voltage = voltage_func(discharged_capacity, current_guess)
         else:
             voltage = results['voltage'][-1]
         
@@ -323,13 +354,17 @@ with col2:
 if run_button and st.session_state.data is not None:
     try:
         with st.spinner("正在模拟..."):
-            # 创建插值函数
-            voltage_func = create_2d_interpolator(st.session_state.data)
+            # 创建插值函数（获取电流范围）
+            voltage_func, current_min, current_max = create_2d_interpolator(st.session_state.data)
+            
+            # 智能估算初始电流：使用数据电流范围的中点
+            initial_current_guess = (current_min + current_max) / 2
             
             # 运行模拟
             result = simulate_constant_power(
                 voltage_func, cell_capacity, start_soc, 
-                power, duration, dt
+                power, duration, dt,
+                current_guess=initial_current_guess
             )
         
         # 关键指标
