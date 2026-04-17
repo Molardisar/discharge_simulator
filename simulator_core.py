@@ -16,21 +16,19 @@ def load_discharge_data(filepath: str) -> pd.DataFrame:
     """从 Excel 文件加载放电数据
     
     动态检测表格结构：
-    - 扫描第 0 行寻找电流标签（"90A", "80A" 等）
-    - 支持任意数量电流倍率
-    - skiprows=2（跳过 2 行表头）
-    - col_base = i*3+1（从第 1 列开始）
+    - 第 0 行：电流标签（90A, 80A, ...），每 3 列一个
+    - 第 1 行：列名（容量 (Ah), 电压 (V), 温度 (°C)）
+    - 第 2 行起：数据
     
     返回：{current, capacity, voltage, temperature}
     """
-    # 读取 Excel 文件，跳过前两行表头
-    df_raw = pd.read_excel(filepath, skiprows=2, header=None)
+    # 第 1 步：读取第 0 行，检测电流标签
+    df_header = pd.read_excel(filepath, nrows=1, header=None)
     
-    # 动态检测电流值：只扫描第 0 行（表头）
-    # 匹配格式："90A", "80A" 等，排除容量值（0, 0.5, 1.0 等）
+    # 动态检测电流值：扫描第 0 行
     currents = []
-    for col in range(1, len(df_raw.columns)):
-        header_val = str(df_raw.iloc[0, col])
+    for col in range(len(df_header.columns)):
+        header_val = str(df_header.iloc[0, col])
         # 匹配 "XA" 格式（如 "90A"）或纯数字（如 "90"）
         match = re.match(r'^(\d+)A?$', header_val.strip(), re.IGNORECASE)
         if match:
@@ -40,7 +38,16 @@ def load_discharge_data(filepath: str) -> pd.DataFrame:
                 currents.append((col, current))
     
     if not currents:
-        raise ValueError("未检测到有效的电流标签（格式：90A, 80A 等）")
+        # 更详细的错误信息
+        available_headers = df_header.iloc[0].tolist()
+        raise ValueError(
+            f"未检测到有效的电流标签（格式：90A, 80A 等）\n"
+            f"检测到的第 0 行内容：{available_headers[:10]}...\n"
+            f"请确认 Excel 第 0 行包含电流标签（如 90A, 80A）"
+        )
+    
+    # 第 2 步：读取数据（跳过前 2 行表头）
+    df_raw = pd.read_excel(filepath, skiprows=2, header=None)
     
     # 按电流值排序（从高到低）
     currents.sort(key=lambda x: x[1], reverse=True)
