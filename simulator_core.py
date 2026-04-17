@@ -9,6 +9,7 @@
 import pandas as pd
 import numpy as np
 from scipy import interpolate
+from scipy.optimize import curve_fit
 import re
 
 
@@ -99,12 +100,16 @@ def load_discharge_data(filepath: str) -> pd.DataFrame:
     return df
 
 
-def create_2d_interpolators(data: pd.DataFrame) -> tuple:
+def create_2d_interpolators(data: pd.DataFrame, fit_temp_order: int = 3) -> tuple:
     """创建 2D 插值函数：voltage = f(capacity, current), temperature = f(capacity, current)
+    
+    参数:
+        data: 放电数据 DataFrame
+        fit_temp_order: 温度拟合多项式阶数（默认 3 阶，2-5 之间）
     
     返回：(voltage_func, temp_func, current_min, current_max)
     - voltage_func: 电压插值函数
-    - temp_func: 温度插值函数
+    - temp_func: 温度插值函数（使用多项式拟合，非整数）
     - current_min: 数据中的最小电流
     - current_max: 数据中的最大电流
     
@@ -118,20 +123,35 @@ def create_2d_interpolators(data: pd.DataFrame) -> tuple:
     current_max = all_currents[-1]
     
     volt_interp_dict = {}
-    temp_interp_dict = {}
+    temp_fit_params = {}  # 存储每个电流的温度拟合参数
     
+    # 第 1 步：对每个电流的温度曲线进行多项式拟合
+    for current in all_currents:
+        subset = data[data['current'] == current].sort_values('capacity')
+        cap_vals = subset['capacity'].values
+        temp_vals = subset['temperature'].values
+        
+        if len(cap_vals) >= fit_temp_order + 1:
+            # 数据点足够，进行多项式拟合
+            try:
+                # 拟合 T = f(capacity) 多项式
+                coeffs = np.polyfit(cap_vals, temp_vals, fit_temp_order)
+                temp_fit_params[current] = coeffs
+            except Exception as e:
+                # 拟合失败，回退到插值
+                temp_fit_params[current] = None
+        else:
+            # 数据点不足，用线性插值
+            temp_fit_params[current] = None
+    
+    # 第 2 步：创建电压插值函数（不变）
     for cap in unique_caps:
         subset = data[data['capacity'] == cap]
-        # 即使只有 1 个点，也创建插值函数
         if len(subset) >= 1:
             if len(subset) == 1:
-                # 单点：返回常数
                 const_voltage = subset['voltage'].values[0]
-                const_temp = subset['temperature'].values[0]
                 volt_interp_dict[cap] = lambda c, v=const_voltage: v
-                temp_interp_dict[cap] = lambda c, t=const_temp: t
             else:
-                # 多点：正常插值
                 volt_interp = interpolate.interp1d(
                     subset['current'].values,
                     subset['voltage'].values,
@@ -139,17 +159,51 @@ def create_2d_interpolators(data: pd.DataFrame) -> tuple:
                     bounds_error=False,
                     fill_value='extrapolate'
                 )
-                temp_interp = interpolate.interp1d(
-                    subset['current'].values,
-                    subset['temperature'].values,
-                    kind='linear',
-                    bounds_error=False,
-                    fill_value='extrapolate'
-                )
                 volt_interp_dict[cap] = volt_interp
-                temp_interp_dict[cap] = temp_interp
     
     cap_list = sorted(volt_interp_dict.keys())
+    
+    # 第 3 步：创建温度函数（使用拟合 + 插值）
+    def temp_from_fit(capacity, current):
+        """从拟合曲线计算温度（返回小数，非整数）"""
+        # 找到最接近的电流
+        if current <= current_min:
+            fit_current = current_min
+        elif current >= current_max:
+            fit_current = current_max
+        else:
+            # 找到上下两个电流
+            for i in range(len(all_currents) - 1):
+                if all_currents[i] <= current <= all_currents[i+1]:
+                    # 在两个电流之间插值
+                    curr_low = all_currents[i]
+                    curr_high = all_currents[i+1]
+                    
+                    # 计算两个电流的拟合温度
+                    if temp_fit_params.get(curr_low) is not None:
+                        temp_low = np.polyval(temp_fit_params[curr_low], capacity)
+                    else:
+                        # 无拟合参数，用数据插值
+                        subset_low = data[data['current'] == curr_low]
+                        temp_low = np.interp(capacity, subset_low['capacity'], subset_low['temperature'])
+                    
+                    if temp_fit_params.get(curr_high) is not None:
+                        temp_high = np.polyval(temp_fit_params[curr_high], capacity)
+                    else:
+                        subset_high = data[data['current'] == curr_high]
+                        temp_high = np.interp(capacity, subset_high['capacity'], subset_high['temperature'])
+                    
+                    # 电流间线性插值
+                    ratio = (current - curr_low) / (curr_high - curr_low)
+                    return float(temp_low + ratio * (temp_high - temp_low))
+        
+        # 使用最接近电流的拟合曲线
+        if temp_fit_params.get(fit_current) is not None:
+            return float(np.polyval(temp_fit_params[fit_current], capacity))
+        else:
+            # 无拟合参数，用数据插值
+            subset = data[data['current'] == fit_current]
+            return float(np.interp(capacity, subset['capacity'], subset['temperature']))
     
     def voltage_func(capacity, current):
         if not cap_list:
@@ -173,25 +227,8 @@ def create_2d_interpolators(data: pd.DataFrame) -> tuple:
         return float(volt_interp_dict[cap_list[-1]](current))
     
     def temperature_func(capacity, current):
-        if not cap_list:
-            raise ValueError("没有可用的插值数据")
-        
-        if capacity <= cap_list[0]:
-            return float(temp_interp_dict[cap_list[0]](current))
-        if capacity >= cap_list[-1]:
-            return float(temp_interp_dict[cap_list[-1]](current))
-        
-        for i in range(len(cap_list) - 1):
-            if cap_list[i] <= capacity <= cap_list[i+1]:
-                cap_low = cap_list[i]
-                cap_high = cap_list[i+1]
-                temp_low = temp_interp_dict[cap_low](current)
-                temp_high = temp_interp_dict[cap_high](current)
-                ratio = (capacity - cap_low) / (cap_high - cap_low)
-                temperature = temp_low + ratio * (temp_high - temp_low)
-                return float(temperature)
-        
-        return float(temp_interp_dict[cap_list[-1]](current))
+        """温度函数：使用多项式拟合，返回小数温度"""
+        return temp_from_fit(capacity, current)
     
     return voltage_func, temperature_func, current_min, current_max
 
