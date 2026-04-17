@@ -15,39 +15,50 @@ import re
 def load_discharge_data(filepath: str) -> pd.DataFrame:
     """从 Excel 文件加载放电数据
     
-    动态检测表格结构：
-    - 第 0 行：电流标签（90A, 80A, ...），每 3 列一个
-    - 第 1 行：列名（容量 (Ah), 电压 (V), 温度 (°C)）
-    - 第 2 行起：数据
+    智能检测表格结构：
+    - 自动跳过空行
+    - 检测电流标签所在行（90A, 80A, ...）
+    - 检测列名行（容量，电压，温度）
+    - 自动识别数据起始行
     
     返回：{current, capacity, voltage, temperature}
     """
-    # 第 1 步：读取第 0 行，检测电流标签
-    df_header = pd.read_excel(filepath, nrows=1, header=None)
+    # 第 1 步：读取原始数据（不跳过任何行）
+    df_raw = pd.read_excel(filepath, header=None)
     
-    # 动态检测电流值：扫描第 0 行
+    # 第 2 步：找到电流标签所在行
+    current_row_idx = None
     currents = []
-    for col in range(len(df_header.columns)):
-        header_val = str(df_header.iloc[0, col])
-        # 匹配 "XA" 格式（如 "90A"）或纯数字（如 "90"）
-        match = re.match(r'^(\d+)A?$', header_val.strip(), re.IGNORECASE)
-        if match:
-            current = int(match.group(1))
-            # 电流范围限制在 10-1000A，排除容量值（0, 0.5, 1.0 等）
-            if 10 <= current <= 1000:
-                currents.append((col, current))
     
-    if not currents:
-        # 更详细的错误信息
-        available_headers = df_header.iloc[0].tolist()
+    for row_idx in range(min(5, len(df_raw))):  # 只检查前 5 行
+        row_data = df_raw.iloc[row_idx].tolist()
+        for col, val in enumerate(row_data):
+            val_str = str(val).strip()
+            match = re.match(r'^(\d+)A?$', val_str, re.IGNORECASE)
+            if match:
+                current = int(match.group(1))
+                if 10 <= current <= 1000:
+                    if current_row_idx is None:
+                        current_row_idx = row_idx
+                    currents.append((col, current))
+        
+        if current_row_idx is not None:
+            break  # 找到电流标签行
+    
+    if current_row_idx is None:
         raise ValueError(
             f"未检测到有效的电流标签（格式：90A, 80A 等）\n"
-            f"检测到的第 0 行内容：{available_headers[:10]}...\n"
-            f"请确认 Excel 第 0 行包含电流标签（如 90A, 80A）"
+            f"已检查前 5 行，请确认 Excel 包含电流标签"
         )
     
-    # 第 2 步：读取数据（跳过前 2 行表头）
-    df_raw = pd.read_excel(filepath, skiprows=2, header=None)
+    # 第 3 步：找到列名行（电流标签的下一行）
+    header_row_idx = current_row_idx + 1
+    
+    # 第 4 步：数据从列名行的下一行开始
+    data_start_row = header_row_idx + 1
+    
+    # 第 5 步：读取数据（跳过表头行）
+    df_data = pd.read_excel(filepath, skiprows=data_start_row, header=None)
     
     # 按电流值排序（从高到低）
     currents.sort(key=lambda x: x[1], reverse=True)
@@ -59,10 +70,10 @@ def load_discharge_data(filepath: str) -> pd.DataFrame:
         col_volt = col_base + 1  # 电压列
         col_temp = col_base + 2  # 温度列
         
-        if col_temp >= len(df_raw.columns):
+        if col_temp >= len(df_data.columns):
             continue
         
-        group_data = df_raw.iloc[:, col_cap:col_temp+1].copy()
+        group_data = df_data.iloc[:, col_cap:col_temp+1].copy()
         group_data.columns = ['capacity', 'voltage', 'temperature']
         group_data['current'] = current
         
