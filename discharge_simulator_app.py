@@ -486,7 +486,7 @@ if run_button and st.session_state.data is not None:
         # PNG 下载
         import io
         buf = io.BytesIO()
-        fig.savefig(buf, format='png', dpi=150, bbox_inches='tight')
+        fig1.savefig(buf, format='png', dpi=150, bbox_inches='tight')
         buf.seek(0)
         st.download_button(
             label="📥 下载曲线图 (PNG)",
