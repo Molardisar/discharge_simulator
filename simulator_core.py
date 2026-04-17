@@ -38,8 +38,8 @@ def load_discharge_data(filepath: str) -> pd.DataFrame:
             match = re.match(r'^(\d+)A$', val_str, re.IGNORECASE)
             if match:
                 current = int(match.group(1))
-                # 电流范围限制在 10-1000A，排除容量值（0, 0.5, 1.0 等）
-                if 10 <= current <= 1000:
+                # 电流范围限制在 1-1000A，支持低电流数据（1A, 5A 等）
+                if 1 <= current <= 1000:
                     if current_row_idx is None:
                         current_row_idx = row_idx
                     currents.append((col, current))
