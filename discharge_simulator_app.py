@@ -93,9 +93,10 @@ for i, seg in enumerate(st.session_state.segments):
             seg_power = st.number_input(
                 "功率 (W)",
                 value=seg['power'],
-                min_value=1,
+                min_value=0.01,
                 max_value=10000,
-                step=1,
+                step=0.01,
+                format="%.2f",
                 key=f"power_{i}",
                 label_visibility="collapsed"
             )
