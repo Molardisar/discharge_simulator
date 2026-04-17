@@ -180,7 +180,7 @@ MIT License
 
 ---
 
-**版本**: v1.0  
+**版本**: v1.0.4  
 **作者**: Claw_395  
-**日期**: 2026-04-14  
-**来源**: https://github.com/Molardisar/dischage_simulator (待创建)
+**日期**: 2026-04-17  
+**来源**: https://github.com/Molardisar/dischage_simulator
