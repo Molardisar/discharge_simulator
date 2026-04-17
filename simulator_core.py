@@ -249,7 +249,9 @@ def simulate_constant_power(voltage_func, temp_func, cell_cap, start_soc, power,
         
         current = power / voltage
         voltage = voltage_func(discharged_capacity, current)
-        temperature = temp_func(discharged_capacity, current)
+        # 温度：第一步且使用起始温度时不覆盖，后续步骤用插值
+        if not (len(results['voltage']) == 0 and use_start_temp):
+            temperature = temp_func(discharged_capacity, current)
         current = power / voltage
         
         results['time'].append(time)
