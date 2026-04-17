@@ -56,7 +56,6 @@ duration = st.sidebar.number_input(
     "持续时间 (秒)",
     value=90,
     min_value=1,
-    max_value=3600,
     step=1
 )
 dt = st.sidebar.number_input(
