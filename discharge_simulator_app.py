@@ -152,11 +152,12 @@ def load_discharge_data(filepath):
     
     return result_df
 
-def create_2d_interpolator(data):
-    """创建 2D 插值函数：voltage = f(capacity, current)
+def create_2d_interpolators(data):
+    """创建 2D 插值函数：voltage = f(capacity, current), temperature = f(capacity, current)
     
-    返回：(voltage_func, current_min, current_max)
-    - voltage_func: 插值函数
+    返回：(voltage_func, temp_func, current_min, current_max)
+    - voltage_func: 电压插值函数
+    - temp_func: 温度插值函数
     - current_min: 数据中的最小电流
     - current_max: 数据中的最大电流
     """
@@ -167,56 +168,97 @@ def create_2d_interpolator(data):
     current_min = all_currents[0]
     current_max = all_currents[-1]
     
-    cap_interp_dict = {}
+    volt_interp_dict = {}
+    temp_interp_dict = {}
+    
     for cap in unique_caps:
         subset = data[data['capacity'] == cap]
-        # 即使只有 1 个点，也创建插值函数（常数函数）
+        # 即使只有 1 个点，也创建插值函数
         if len(subset) >= 1:
             if len(subset) == 1:
-                # 单点：返回常数电压
+                # 单点：返回常数
                 const_voltage = subset['voltage'].values[0]
-                cap_interp_dict[cap] = lambda c, v=const_voltage: v
+                const_temp = subset['temperature'].values[0]
+                volt_interp_dict[cap] = lambda c, v=const_voltage: v
+                temp_interp_dict[cap] = lambda c, t=const_temp: t
             else:
                 # 多点：正常插值
-                interp = interpolate.interp1d(
+                volt_interp = interpolate.interp1d(
                     subset['current'].values,
                     subset['voltage'].values,
                     kind='linear',
                     bounds_error=False,
                     fill_value='extrapolate'
                 )
-                cap_interp_dict[cap] = interp
+                temp_interp = interpolate.interp1d(
+                    subset['current'].values,
+                    subset['temperature'].values,
+                    kind='linear',
+                    bounds_error=False,
+                    fill_value='extrapolate'
+                )
+                volt_interp_dict[cap] = volt_interp
+                temp_interp_dict[cap] = temp_interp
     
-    cap_list = sorted(cap_interp_dict.keys())
+    cap_list = sorted(volt_interp_dict.keys())
     
     def voltage_func(capacity, current):
         if not cap_list:
             raise ValueError("没有可用的插值数据")
         
         if capacity <= cap_list[0]:
-            return float(cap_interp_dict[cap_list[0]](current))
+            return float(volt_interp_dict[cap_list[0]](current))
         if capacity >= cap_list[-1]:
-            return float(cap_interp_dict[cap_list[-1]](current))
+            return float(volt_interp_dict[cap_list[-1]](current))
         
         for i in range(len(cap_list) - 1):
             if cap_list[i] <= capacity <= cap_list[i+1]:
                 cap_low = cap_list[i]
                 cap_high = cap_list[i+1]
-                volt_low = cap_interp_dict[cap_low](current)
-                volt_high = cap_interp_dict[cap_high](current)
+                volt_low = volt_interp_dict[cap_low](current)
+                volt_high = volt_interp_dict[cap_high](current)
                 ratio = (capacity - cap_low) / (cap_high - cap_low)
                 voltage = volt_low + ratio * (volt_high - volt_low)
                 return float(voltage)
         
-        return float(cap_interp_dict[cap_list[-1]](current))
+        return float(volt_interp_dict[cap_list[-1]](current))
     
-    return voltage_func, current_min, current_max
+    def temperature_func(capacity, current):
+        if not cap_list:
+            raise ValueError("没有可用的插值数据")
+        
+        if capacity <= cap_list[0]:
+            return float(temp_interp_dict[cap_list[0]](current))
+        if capacity >= cap_list[-1]:
+            return float(temp_interp_dict[cap_list[-1]](current))
+        
+        for i in range(len(cap_list) - 1):
+            if cap_list[i] <= capacity <= cap_list[i+1]:
+                cap_low = cap_list[i]
+                cap_high = cap_list[i+1]
+                temp_low = temp_interp_dict[cap_low](current)
+                temp_high = temp_interp_dict[cap_high](current)
+                ratio = (capacity - cap_low) / (cap_high - cap_low)
+                temperature = temp_low + ratio * (temp_high - temp_low)
+                return float(temperature)
+        
+        return float(temp_interp_dict[cap_list[-1]](current))
+    
+    return voltage_func, temperature_func, current_min, current_max
 
-def simulate_constant_power(voltage_func, cell_cap, start_soc, power, duration, dt, current_guess=None):
+def simulate_constant_power(voltage_func, temp_func, cell_cap, start_soc, power, duration, dt, current_guess=None, ambient_temp=25.0):
     """恒功率放电模拟
     
     参数:
+        voltage_func: 电压插值函数 V = f(Q, I)
+        temp_func: 温度插值函数 T = f(Q, I)
+        cell_cap: 电芯额定容量 (Ah)
+        start_soc: 起始 SoC (0-1)
+        power: 恒功率 (W)
+        duration: 时长 (秒)
+        dt: 时间步长 (秒)
         current_guess: 初始电流猜测值（None 时自动估算）
+        ambient_temp: 环境温度 (℃)
     """
     discharged_capacity = cell_cap * (1 - start_soc)
     remaining_capacity = cell_cap * start_soc
@@ -232,7 +274,8 @@ def simulate_constant_power(voltage_func, cell_cap, start_soc, power, duration, 
         'remaining_capacity': [],
         'voltage': [],
         'current': [],
-        'soc': []
+        'soc': [],
+        'temperature': []
     }
     
     time = 0
@@ -242,11 +285,14 @@ def simulate_constant_power(voltage_func, cell_cap, start_soc, power, duration, 
         if len(results['voltage']) == 0:
             # 第一次迭代：使用初始猜测电流
             voltage = voltage_func(discharged_capacity, current_guess)
+            temperature = temp_func(discharged_capacity, current_guess)
         else:
             voltage = results['voltage'][-1]
+            temperature = results['temperature'][-1]
         
         current = power / voltage
         voltage = voltage_func(discharged_capacity, current)
+        temperature = temp_func(discharged_capacity, current)
         current = power / voltage
         
         results['time'].append(time)
@@ -255,6 +301,7 @@ def simulate_constant_power(voltage_func, cell_cap, start_soc, power, duration, 
         results['voltage'].append(voltage)
         results['current'].append(current)
         results['soc'].append(soc)
+        results['temperature'].append(temperature)
         
         if voltage < 2.5 or remaining_capacity <= 0:
             break
@@ -354,15 +401,15 @@ with col2:
 if run_button and st.session_state.data is not None:
     try:
         with st.spinner("正在模拟..."):
-            # 创建插值函数（获取电流范围）
-            voltage_func, current_min, current_max = create_2d_interpolator(st.session_state.data)
+            # 创建插值函数（获取电流范围和温度函数）
+            voltage_func, temp_func, current_min, current_max = create_2d_interpolators(st.session_state.data)
             
             # 智能估算初始电流：使用数据电流范围的中点
             initial_current_guess = (current_min + current_max) / 2
             
             # 运行模拟
             result = simulate_constant_power(
-                voltage_func, cell_capacity, start_soc, 
+                voltage_func, temp_func, cell_capacity, start_soc, 
                 power, duration, dt,
                 current_guess=initial_current_guess
             )
@@ -391,10 +438,19 @@ if run_button and st.session_state.data is not None:
         with col8:
             st.metric("放出容量", f"{result['discharged_capacity'].iloc[-1] - result['discharged_capacity'].iloc[0]:.3f} Ah")
         
+        # 温度指标
+        col9, col10, col11 = st.columns(3)
+        with col9:
+            st.metric("初始温度", f"{result['temperature'].iloc[0]:.1f} ℃")
+        with col10:
+            st.metric("最高温度", f"{result['temperature'].max():.1f} ℃")
+        with col11:
+            st.metric("温升", f"{result['temperature'].max() - result['temperature'].iloc[0]:.1f} ℃")
+        
         # 曲线图 - 时间为横坐标
         st.subheader("Discharge Curves vs Time")
         
-        fig1, axes1 = plt.subplots(3, 1, figsize=(12, 10), sharex=True)
+        fig1, axes1 = plt.subplots(4, 1, figsize=(12, 12), sharex=True)
         fig1.suptitle(f'Constant Power Discharge ({power}W, {duration}s)\nStart: {start_soc*100:.0f}% SoC', 
                     fontsize=14, fontweight='bold')
         
@@ -412,13 +468,20 @@ if run_button and st.session_state.data is not None:
         ax2.grid(True, alpha=0.3)
         ax2.set_ylim(result['current'].min() - 2, result['current'].max() + 2)
         
-        # SoC vs Time
+        # Temperature vs Time
         ax3 = axes1[2]
-        ax3.plot(result['time'], result['soc'] * 100, 'g-', linewidth=2)
-        ax3.set_ylabel('SoC (%)')
-        ax3.set_xlabel('Time (s)')
+        ax3.plot(result['time'], result['temperature'], 'm-', linewidth=2)
+        ax3.set_ylabel('Temperature (℃)')
         ax3.grid(True, alpha=0.3)
-        ax3.set_ylim(result['soc'].min() * 100 - 5, result['soc'].max() * 100 + 5)
+        ax3.set_ylim(result['temperature'].min() - 1, result['temperature'].max() + 1)
+        
+        # SoC vs Time
+        ax4 = axes1[3]
+        ax4.plot(result['time'], result['soc'] * 100, 'g-', linewidth=2)
+        ax4.set_ylabel('SoC (%)')
+        ax4.set_xlabel('Time (s)')
+        ax4.grid(True, alpha=0.3)
+        ax4.set_ylim(result['soc'].min() * 100 - 5, result['soc'].max() * 100 + 5)
         
         plt.tight_layout()
         st.pyplot(fig1)
@@ -429,8 +492,8 @@ if run_button and st.session_state.data is not None:
         # 计算累积放电容量
         discharged_cap = result['discharged_capacity'] - result['discharged_capacity'].iloc[0]
         
-        fig2, axes2 = plt.subplots(3, 1, figsize=(12, 10), sharex=True)
-        fig2.suptitle(f'Voltage/Current/SoC vs Discharged Capacity\nStart: {start_soc*100:.0f}% SoC', 
+        fig2, axes2 = plt.subplots(4, 1, figsize=(12, 12), sharex=True)
+        fig2.suptitle(f'Voltage/Current/SoC/Temperature vs Discharged Capacity\nStart: {start_soc*100:.0f}% SoC', 
                     fontsize=14, fontweight='bold')
         
         # Voltage vs Capacity
@@ -447,13 +510,20 @@ if run_button and st.session_state.data is not None:
         ax5.grid(True, alpha=0.3)
         ax5.set_ylim(result['current'].min() - 2, result['current'].max() + 2)
         
-        # SoC vs Capacity
+        # Temperature vs Capacity
         ax6 = axes2[2]
-        ax6.plot(discharged_cap, result['soc'] * 100, 'g-', linewidth=2)
-        ax6.set_ylabel('SoC (%)')
-        ax6.set_xlabel('Discharged Capacity (Ah)')
+        ax6.plot(discharged_cap, result['temperature'], 'm-', linewidth=2)
+        ax6.set_ylabel('Temperature (℃)')
         ax6.grid(True, alpha=0.3)
-        ax6.set_ylim(result['soc'].min() * 100 - 5, result['soc'].max() * 100 + 5)
+        ax6.set_ylim(result['temperature'].min() - 1, result['temperature'].max() + 1)
+        
+        # SoC vs Capacity
+        ax7 = axes2[3]
+        ax7.plot(discharged_cap, result['soc'] * 100, 'g-', linewidth=2)
+        ax7.set_ylabel('SoC (%)')
+        ax7.set_xlabel('Discharged Capacity (Ah)')
+        ax7.grid(True, alpha=0.3)
+        ax7.set_ylim(result['soc'].min() * 100 - 5, result['soc'].max() * 100 + 5)
         
         plt.tight_layout()
         st.pyplot(fig2)
