@@ -281,6 +281,7 @@ def simulate_multi_segment_power(voltage_func, temp_func, cell_cap, start_soc, s
     """
     all_results = []
     current_soc = start_soc
+    time_offset = 0  # 时间累加器
     
     for i, seg in enumerate(segments):
         power = seg['power']
@@ -300,7 +301,13 @@ def simulate_multi_segment_power(voltage_func, temp_func, cell_cap, start_soc, s
         # 添加段索引
         result['segment'] = i + 1
         
+        # 时间累加：当前段的时间 + 之前所有段的总时长
+        result['time'] = result['time'] + time_offset
+        
         all_results.append(result)
+        
+        # 更新时间累加器（使用本段实际结束时间）
+        time_offset = result['time'].iloc[-1]
         
         # 更新 SoC 为下一段的初始状态
         current_soc = result['soc'].iloc[-1]
