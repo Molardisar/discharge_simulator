@@ -105,10 +105,10 @@ for i, seg in enumerate(st.session_state.segments):
         with col2:
             seg_duration = st.number_input(
                 "时长 (s)",
-                value=seg['duration'],
-                min_value=1,
-                max_value=100000,
-                step=1,
+                value=float(seg['duration']),
+                min_value=1.0,
+                max_value=100000.0,
+                step=1.0,
                 key=f"duration_{i}",
                 label_visibility="collapsed"
             )
