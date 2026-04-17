@@ -79,32 +79,37 @@ uploaded_file = st.sidebar.file_uploader(
 @st.cache_data
 def load_discharge_data(filepath):
     """读取多倍率放电数据 - 动态检测表格结构"""
-    # 先读取前几行分析表格结构
-    df_preview = pd.read_excel(filepath, header=None, nrows=5)
+    # 先读取前 3 行分析表格结构
+    df_preview = pd.read_excel(filepath, header=None, nrows=3)
     
-    # 尝试从表头读取电流值（第一行或第二行）
-    header_row = None
+    # 尝试从表头读取电流值（只检查第 1 行）
+    header_row = df_preview.iloc[0]
     currents = []
     
-    # 检查第一行是否包含电流信息
-    for row_idx in range(min(3, len(df_preview))):
-        row_values = df_preview.iloc[row_idx].dropna().values
-        for val in row_values:
+    # 扫描表头行，寻找电流标签
+    # 格式可能是："90A", "90", "90A 放电", "Current: 90A" 等
+    for col_idx in range(len(header_row)):
+        val = header_row.iloc[col_idx]
+        if pd.isna(val):
+            continue
+        
+        val_str = str(val).strip()
+        
+        # 尝试提取电流值
+        import re
+        # 匹配模式：数字+A（如 "90A"），或纯数字（如 "90"）
+        match = re.search(r'(\d+(?:\.\d+)?)\s*[Aa]?', val_str)
+        if match:
             try:
-                num_val = float(val)
-                # 如果数值在 1-1000 之间，可能是电流值
-                if 1 <= num_val <= 1000:
-                    # 检查是否可能是电流（通常放电电流是整数或接近整数）
-                    if num_val == int(num_val) or abs(num_val - round(num_val)) < 0.1:
-                        if num_val not in currents:
-                            currents.append(num_val)
+                num_val = float(match.group(1))
+                # 电流通常是 10-1000A 的整数
+                if 10 <= num_val <= 1000:
+                    # 检查是否为整数或接近整数（排除容量值）
+                    if num_val == int(num_val):
+                        if int(num_val) not in currents:
+                            currents.append(int(num_val))
             except (ValueError, TypeError):
                 continue
-        
-        # 如果找到了电流值，记录表头位置
-        if currents:
-            header_row = row_idx
-            break
     
     # 如果没有从表头找到电流值，使用默认值
     if not currents:
@@ -113,8 +118,8 @@ def load_discharge_data(filepath):
     # 排序电流值（从大到小）
     currents = sorted(currents, reverse=True)
     
-    # 重新读取数据，跳过表头
-    skip_rows = header_row + 1 if header_row is not None else 2
+    # 重新读取数据，跳过表头（假设表头占 1 行）
+    skip_rows = 1
     df = pd.read_excel(filepath, header=None, skiprows=skip_rows)
     
     all_data = []
@@ -124,13 +129,12 @@ def load_discharge_data(filepath):
     cols_per_group = 3  # 假设每组 3 列：容量、电压、温度
     num_groups = total_cols // cols_per_group
     
-    # 如果电流值数量与列组数不匹配，尝试调整
+    # 如果电流值数量与列组数不匹配，以列组数为准
     if len(currents) != num_groups and num_groups > 0:
-        # 使用列组数作为电流值数量
         if len(currents) > num_groups:
             currents = currents[:num_groups]
         elif len(currents) < num_groups:
-            # 补充默认电流值
+            # 补充默认电流值（按常见放电倍率）
             default_currents = [100, 90, 80, 70, 60, 50, 40, 30, 20, 10]
             for curr in default_currents:
                 if curr not in currents and len(currents) < num_groups:
@@ -161,7 +165,8 @@ def load_discharge_data(filepath):
         'currents': currents,
         'num_groups': len(currents),
         'total_points': len(result_df),
-        'skip_rows': skip_rows
+        'skip_rows': skip_rows,
+        'total_cols': total_cols
     }
     
     return result_df
